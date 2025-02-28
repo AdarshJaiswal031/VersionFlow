@@ -1,3 +1,4 @@
+/* eslint-disable no-unused-vars */
 /* eslint-disable no-undef */
 import { app, BrowserWindow, ipcMain, shell, Menu, dialog } from "electron";
 import path from "path";
@@ -7,26 +8,29 @@ import http from "http";
 import axios from "axios";
 import keytar from "keytar";
 import { fileURLToPath } from 'url';
-import { dirname } from 'path';
+
+import fs from "fs";
+import { diffLines } from "diff";
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const __dirname = path.dirname(__filename);
 
 const SERVICE_NAME = "VersionFlowApp";
 const ACCOUNT_NAME = "jwt_token";
 const ACCOUNT_NAME_REFRESH = "jwt_refresh_token";
+const VERSIONS_DIR = path.join(__dirname, ".versions");
 let mainWindow;
 async function createWindow() {
     mainWindow = new BrowserWindow({
         width: 800,
         height: 600,
-        frame: false,
-        titleBarStyle: "hidden", // Keeps the system buttons
-        titleBarOverlay: {
-            color: "#1A212A", // Background color of the title bar
-            symbolColor: "white", // Color of the close/minimize/maximize buttons
-            height: 45, // Adjust height as needed
-        },
+        // frame: false,
+        // titleBarStyle: "hidden", // Keeps the system buttons
+        // titleBarOverlay: {
+        //     color: "#1A212A", // Background color of the title bar
+        //     symbolColor: "white", // Color of the close/minimize/maximize buttons
+        //     height: 45, // Adjust height as needed
+        // },
         webPreferences: {
             preload: path.join(__dirname, "preload.cjs"),
             contextIsolation: true,
@@ -34,14 +38,17 @@ async function createWindow() {
             nodeIntegration: false,
         }
     });
-    Menu.setApplicationMenu(null)
+    // Menu.setApplicationMenu(null)
     if (isDev()) {
         mainWindow.loadURL("http://localhost:5173/");
     }
     else {
         mainWindow.loadFile(path.join(app.getAppPath(), 'dist-react/index.html'))
     }
-    checkJWTToken();
+    if (!fs.existsSync(VERSIONS_DIR)) {
+        fs.mkdirSync(VERSIONS_DIR);
+    }
+    // checkJWTToken();
 }
 
 app.whenReady().then(() => {
@@ -83,13 +90,13 @@ app.whenReady().then(() => {
 
             res.send("<h2>✅ Authentication Successful. You can close this tab.</h2>");
         } catch (error) {
-            console.error("OAuth Callback Error:", error);
+            console.error("OAuth Callback Error:");
             res.send("<h2>❌ Authentication Failed. Please try again.</h2>");
         }
     });
 
     //---- File Editor
-    ipcMain.handle("open-file", async () => {
+    ipcMain.on("open-file", async (event) => {
         const { filePaths } = await dialog.showOpenDialog({
             properties: ["openFile"],
             filters: [{ name: "Text Files", extensions: ["txt", "js", "html", "java", "json", "md", "css"] }]
@@ -97,10 +104,85 @@ app.whenReady().then(() => {
 
         if (filePaths.length > 0) {
             const content = fs.readFileSync(filePaths[0], "utf-8");
-            return { path: filePaths[0], content };
+            event.sender.send("open-file", { path: filePaths[0], content });
+        } else {
+            event.sender.send("open-file", null);
         }
-        return null;
     });
+
+    ipcMain.on("save-file", async (event, { filePath, content }) => {
+        if (filePath) {  // ✅ Now it's correct
+            fs.writeFile(filePath, content, "utf-8", () => {
+                event.sender.send("save-file", { success: true, path: filePath });
+            });
+        } else {
+            const { filePath: newFilePath } = await dialog.showSaveDialog({
+                filters: [{ name: "Text Files", extensions: ["txt", "js", "html", "java", "json", "md", "css"] }]
+            });
+
+            if (newFilePath) {
+                fs.writeFileSync(newFilePath, content, "utf-8", () => {
+                    event.sender.send("save-file", { success: true, path: newFilePath });
+                });
+            } else {
+                event.sender.send("save-file", { success: false });
+            }
+        }
+    });
+
+
+    ipcMain.on("commit-file", (event, { filePath, content }) => {
+        console.log("Received commit request:", { filePath, content });
+
+        if (!filePath || typeof content !== "string") {
+            console.error("Invalid commit data:", { filePath, content });
+            return;
+        }
+
+        const versionFile = filePath.replace(/[^a-zA-Z0-9]/g, "_") + ".json";
+        const versionPath = path.join(VERSIONS_DIR, versionFile);
+
+        let previousContent = "";
+        let versionHistory = [];
+
+        // 🛠️ **Read previous versions if they exist**
+        if (fs.existsSync(versionPath)) {
+            try {
+                versionHistory = JSON.parse(fs.readFileSync(versionPath, "utf-8"));
+
+                if (Array.isArray(versionHistory) && versionHistory.length > 0) {
+                    // Start with an empty string and apply only "added" changes in order
+                    previousContent = versionHistory.reduce((acc, entry) => {
+                        entry.changes.forEach(change => {
+                            if (change.added) acc += change.value + "\n";
+                        });
+                        return acc;
+                    }, "").trim(); // Trim extra spaces
+                }
+            } catch (error) {
+                console.error("Error reading previous version:", error);
+            }
+        }
+        previousContent = previousContent.replace(/\r\n/g, "\n").trim();
+        content = content.replace(/\r\n/g, "\n").trim();
+
+        // 🔍 **Compute the Diff (instead of storing full content)**
+        const diff = diffLines(previousContent, content, { ignoreWhitespace: true });
+
+        // 📝 **Store only the changes instead of full content**
+        const newVersionEntry = {
+            timestamp: Date.now(),
+            changes: diff.filter(change => change.added || change.removed) // Only store meaningful changes
+        };
+
+        versionHistory.push(newVersionEntry);
+        fs.writeFileSync(versionPath, JSON.stringify(versionHistory, null, 2), "utf-8");
+
+        console.log("File committed successfully!");
+
+        event.reply("commit-success", { success: true, versionPath });
+    });
+
 
     http.createServer(expressApp).listen(3000, () => {
         console.log("OAuth listener running on http://localhost:3000");

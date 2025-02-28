@@ -1,22 +1,20 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
-const validChannels = ["oauth-start", "oauth-success", "open-file"];
+const validChannels = ["oauth-start", "oauth-success", "open-file", "save-file", "commit-file", "commit-success"];
 console.log("preload loaded")
 contextBridge.exposeInMainWorld("electron", {
     send: (channel, data) => {
         if (validChannels.includes(channel)) {
-            console.log(channel)
+            console.log(`Sending: ${channel}`, data);
             ipcRenderer.send(channel, data);
         }
     },
     on: (channel, callback) => {
         if (validChannels.includes(channel)) {
-            ipcRenderer.on(channel, (_event, ...args) => callback(...args));
+            ipcRenderer.on(channel, (_event, ...args) => {
+                console.log(`Received: ${channel}`, args);
+                callback(...args);
+            });
         }
     },
-    // once: (channel, callback) => {
-    //     if (validChannels.includes(channel)) {
-    //         ipcRenderer.once(channel, (_event, ...args) => callback(...args));
-    //     }
-    // }
 });
