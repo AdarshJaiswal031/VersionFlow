@@ -7,13 +7,14 @@ import express from "express";
 import http from "http";
 import axios from "axios";
 import keytar from "keytar";
-import { fileURLToPath } from 'url';
-
+import { fileURLToPath } from "url";
+import { diff_match_patch } from "diff-match-patch";
 import fs from "fs";
 import { diffLines } from "diff";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const dmp = new diff_match_patch();
 
 const SERVICE_NAME = "VersionFlowApp";
 const ACCOUNT_NAME = "jwt_token";
@@ -36,14 +37,13 @@ async function createWindow() {
             contextIsolation: true,
             enableRemoteModule: false,
             nodeIntegration: false,
-        }
+        },
     });
     // Menu.setApplicationMenu(null)
     if (isDev()) {
         mainWindow.loadURL("http://localhost:5173/");
-    }
-    else {
-        mainWindow.loadFile(path.join(app.getAppPath(), 'dist-react/index.html'))
+    } else {
+        mainWindow.loadFile(path.join(app.getAppPath(), "dist-react/index.html"));
     }
     if (!fs.existsSync(VERSIONS_DIR)) {
         fs.mkdirSync(VERSIONS_DIR);
@@ -55,7 +55,7 @@ app.whenReady().then(() => {
     createWindow();
 
     ipcMain.on("oauth-start", () => {
-        console.log("oauth-start inside main")
+        console.log("oauth-start inside main");
         const authUrl = "http://localhost:8082/oauth2/authorization/google";
         shell.openExternal(authUrl);
     });
@@ -66,9 +66,12 @@ app.whenReady().then(() => {
         const code = req.query.code;
 
         try {
-            const response = await axios.get("http://localhost:8082/auth/google/callback", {
-                params: { code }
-            });
+            const response = await axios.get(
+                "http://localhost:8082/auth/google/callback",
+                {
+                    params: { code },
+                }
+            );
 
             const token = response.data.accessToken;
             const refreshToken = response.data.refreshToken;
@@ -79,7 +82,11 @@ app.whenReady().then(() => {
                     await keytar.deletePassword(SERVICE_NAME, ACCOUNT_NAME_REFRESH);
 
                     await keytar.setPassword(SERVICE_NAME, ACCOUNT_NAME, token);
-                    await keytar.setPassword(SERVICE_NAME, ACCOUNT_NAME_REFRESH, refreshToken);
+                    await keytar.setPassword(
+                        SERVICE_NAME,
+                        ACCOUNT_NAME_REFRESH,
+                        refreshToken
+                    );
 
                     await checkJWTToken();
                 } catch (error) {
@@ -87,8 +94,9 @@ app.whenReady().then(() => {
                 }
             }
 
-
-            res.send("<h2>✅ Authentication Successful. You can close this tab.</h2>");
+            res.send(
+                "<h2>✅ Authentication Successful. You can close this tab.</h2>"
+            );
         } catch (error) {
             console.error("OAuth Callback Error:");
             res.send("<h2>❌ Authentication Failed. Please try again.</h2>");
@@ -99,7 +107,12 @@ app.whenReady().then(() => {
     ipcMain.on("open-file", async (event) => {
         const { filePaths } = await dialog.showOpenDialog({
             properties: ["openFile"],
-            filters: [{ name: "Text Files", extensions: ["txt", "js", "html", "java", "json", "md", "css"] }]
+            filters: [
+                {
+                    name: "Text Files",
+                    extensions: ["txt", "js", "html", "java", "json", "md", "css"],
+                },
+            ],
         });
 
         if (filePaths.length > 0) {
@@ -111,13 +124,19 @@ app.whenReady().then(() => {
     });
 
     ipcMain.on("save-file", async (event, { filePath, content }) => {
-        if (filePath) {  // ✅ Now it's correct
+        if (filePath) {
+            // ✅ Now it's correct
             fs.writeFile(filePath, content, "utf-8", () => {
                 event.sender.send("save-file", { success: true, path: filePath });
             });
         } else {
             const { filePath: newFilePath } = await dialog.showSaveDialog({
-                filters: [{ name: "Text Files", extensions: ["txt", "js", "html", "java", "json", "md", "css"] }]
+                filters: [
+                    {
+                        name: "Text Files",
+                        extensions: ["txt", "js", "html", "java", "json", "md", "css"],
+                    },
+                ],
             });
 
             if (newFilePath) {
@@ -130,7 +149,16 @@ app.whenReady().then(() => {
         }
     });
 
+    ipcMain.on("recreate-version", (event, { filePath, versionNumber }) => {
+        var recreatedContent = regenerateFile(filePath, versionNumber);
+        // console.log(recreatedContent);
+        event.reply("recreate-version", { success: true, recreatedContent });
+    });
 
+    ipcMain.on("get-versions", (event, { filePath }) => {
+        const versions = getVersionHistory(filePath);
+        event.reply("get-versions", { success: true, versions });
+    });
     ipcMain.on("commit-file", (event, { filePath, content }) => {
         console.log("Received commit request:", { filePath, content });
 
@@ -151,43 +179,86 @@ app.whenReady().then(() => {
                 versionHistory = JSON.parse(fs.readFileSync(versionPath, "utf-8"));
 
                 if (Array.isArray(versionHistory) && versionHistory.length > 0) {
-                    // Start with an empty string and apply only "added" changes in order
+                    // Reconstruct previous content from stored patches
                     previousContent = versionHistory.reduce((acc, entry) => {
-                        entry.changes.forEach(change => {
-                            if (change.added) acc += change.value + "\n";
+                        entry.patches.forEach((patchStr) => {
+                            const patches = dmp.patch_fromText(patchStr);
+                            acc = dmp.patch_apply(patches, acc)[0]; // Apply patch
                         });
                         return acc;
-                    }, "").trim(); // Trim extra spaces
+                    }, "");
                 }
             } catch (error) {
                 console.error("Error reading previous version:", error);
             }
         }
-        previousContent = previousContent.replace(/\r\n/g, "\n").trim();
-        content = content.replace(/\r\n/g, "\n").trim();
 
-        // 🔍 **Compute the Diff (instead of storing full content)**
-        const diff = diffLines(previousContent, content, { ignoreWhitespace: true });
+        previousContent = previousContent.replace(/\r\n/g, "\n");
+        content = content.replace(/\r\n/g, "\n");
 
-        // 📝 **Store only the changes instead of full content**
+        // 🔍 **Compute the Diff using `diff-match-patch`**
+        const diffs = dmp.diff_main(previousContent, content);
+        dmp.diff_cleanupSemantic(diffs);
+
+        // 📝 **Convert diff to patch format**
+        const patches = dmp.patch_make(previousContent, diffs);
+        const patchText = dmp.patch_toText(patches);
+
+        // **Store only the patches**
         const newVersionEntry = {
             timestamp: Date.now(),
-            changes: diff.filter(change => change.added || change.removed) // Only store meaningful changes
+            patches: [patchText], // Storing as text to keep it compact
         };
 
         versionHistory.push(newVersionEntry);
-        fs.writeFileSync(versionPath, JSON.stringify(versionHistory, null, 2), "utf-8");
+        fs.writeFileSync(
+            versionPath,
+            JSON.stringify(versionHistory, null, 2),
+            "utf-8"
+        );
 
         console.log("File committed successfully!");
 
         event.reply("commit-success", { success: true, versionPath });
     });
 
-
     http.createServer(expressApp).listen(3000, () => {
         console.log("OAuth listener running on http://localhost:3000");
     });
 });
+
+function getVersionFilePath(filePath) {
+    const versionFile = filePath.replace(/[^a-zA-Z0-9]/g, "_") + ".json";
+    const versionPath = path.join(VERSIONS_DIR, versionFile);
+    return versionPath
+}
+
+function regenerateFile(filePath, versionNumber) {
+    const versionPath = getVersionFilePath(filePath);
+
+    if (!fs.existsSync(versionPath)) {
+        console.error("Version file not found:", versionPath);
+        return "";
+    }
+
+    const versionHistory = JSON.parse(fs.readFileSync(versionPath, "utf-8"));
+
+    if (versionNumber < 1 || versionNumber > versionHistory.length) {
+        console.error("Invalid version number. Available range: 1 -", versionHistory.length);
+        return "";
+    }
+
+    let regeneratedContent = "";
+
+    for (let i = 0; i < versionNumber; i++) {
+        versionHistory[i].patches.forEach(patchStr => {
+            const patches = dmp.patch_fromText(patchStr);
+            regeneratedContent = dmp.patch_apply(patches, regeneratedContent)[0];
+        });
+    }
+
+    return regeneratedContent;
+}
 
 async function checkJWTToken() {
     const token = await keytar.getPassword(SERVICE_NAME, ACCOUNT_NAME);
@@ -195,13 +266,12 @@ async function checkJWTToken() {
     if (token) {
         try {
             const response = await axios.get("http://localhost:8082/user", {
-                headers: { Authorization: `Bearer ${token}` }
+                headers: { Authorization: `Bearer ${token}` },
             });
             if (response.status === 200) {
                 console.log("✅ Access token is valid");
                 mainWindow.webContents.send("oauth-success", response.data);
-            }
-            else if (response.status === 401) {
+            } else if (response.status === 401) {
                 console.log("⚠️ Access token expired. Attempting refresh...");
                 await checkRefreshToken();
             } else {
@@ -209,41 +279,70 @@ async function checkJWTToken() {
                 await keytar.deletePassword(SERVICE_NAME, ACCOUNT_NAME);
             }
         } catch (error) {
-            console.log(error)
+            console.log(error);
         }
     } else {
         console.log("⚠️ No JWT token found. Please login.");
     }
 }
 
-
 async function checkRefreshToken() {
-    const refreshToken = await keytar.getPassword(SERVICE_NAME, ACCOUNT_NAME_REFRESH);
+    const refreshToken = await keytar.getPassword(
+        SERVICE_NAME,
+        ACCOUNT_NAME_REFRESH
+    );
 
     if (refreshToken) {
         try {
             const response = await axios.post("http://localhost:8082/auth/refresh", {
-                refreshToken: refreshToken
+                refreshToken: refreshToken,
             });
 
             const newAccessToken = response.data.accessToken;
             const newRefreshToken = response.data.refreshToken;
 
-
             await keytar.setPassword(SERVICE_NAME, ACCOUNT_NAME, newAccessToken);
-            await keytar.setPassword(SERVICE_NAME, ACCOUNT_NAME_REFRESH, newRefreshToken);
+            await keytar.setPassword(
+                SERVICE_NAME,
+                ACCOUNT_NAME_REFRESH,
+                newRefreshToken
+            );
 
             console.log("🔄 Access token refreshed successfully");
 
             mainWindow.webContents.send("oauth-success", response.data);
         } catch (error) {
-            console.log("❌ Refresh token failed:", error.response?.data || error.message);
+            console.log(
+                "❌ Refresh token failed:",
+                error.response?.data || error.message
+            );
             await keytar.deletePassword(SERVICE_NAME, ACCOUNT_NAME);
             await keytar.deletePassword(SERVICE_NAME, ACCOUNT_NAME_REFRESH);
         }
     } else {
         console.log("⚠️ No refresh token found. Please login again.");
     }
+}
+
+function getVersionHistory(filePath) {
+    const versionPath = getVersionFilePath(filePath);
+
+    if (!fs.existsSync(versionPath)) {
+        console.error("Version file not found:", versionPath);
+        return [];
+    }
+
+    const versionHistory = JSON.parse(fs.readFileSync(versionPath, "utf-8"));
+
+    return versionHistory.map((entry, index) => ({
+        version: (index + 1).toString(),
+        time: new Date(entry.timestamp).toLocaleDateString("en-US", {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+        }),
+        msg: "default",
+    }));
 }
 
 app.on("window-all-closed", () => {

@@ -11,7 +11,7 @@ const FileCard = (props) => {
                 <li className='text-xs text-left text-zinc-500'>Last commit : {props.commitTime}</li>
             </ul>
             <ul className='w-1/4 flex justify-end'>
-                <li><i className="ri-aliens-line text-blue-400 text-lg"></i></li>
+                <li><i className="ri-aliens-line text-blue-400 text-lg text-gradient"></i></li>
                 <li><i className="ri-aliens-fill text-blue-400 text-lg hidden"></i></li>
             </ul>
         </BlurryButton>

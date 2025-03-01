@@ -1,9 +1,16 @@
 /* eslint-disable react/prop-types */
 import { useState } from "react";
+import { useRecoilValue } from "recoil";
+import { filePathState } from "../recoil/filePathAtom";
 
 const VersionTimeline = ({ versions }) => {
     const [hoveredVersion, setHoveredVersion] = useState(null);
     const [selectedVersion, setSelectedVersion] = useState(null);
+    const filePathRecoil = useRecoilValue(filePathState)
+    const handleRecreateVersion = (index) => {
+        setSelectedVersion(index)
+        window.electron.send("recreate-version", { filePath: filePathRecoil, versionNumber: index + 1 })
+    }
 
     return (
         <div className="flex flex-col items-center relative gap-5">
@@ -25,7 +32,7 @@ const VersionTimeline = ({ versions }) => {
 
                     {/* Version Circle */}
                     <div
-                        onClick={() => setSelectedVersion(index)}
+                        onClick={() => handleRecreateVersion(index)}
                         className={`w-6 h-6 rounded-full cursor-pointer backdrop-blur-md 
                         border-2 transition-all relative flex items-center justify-center
                         ${selectedVersion === index

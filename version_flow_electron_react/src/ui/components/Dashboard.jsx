@@ -1,20 +1,27 @@
 /* eslint-disable no-unused-vars */
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import Navbar from './Navbar'
 import FileCard from './FileCard'
 import FileEditor from './FileEditor'
 import BlurryButton from './BlurryButton'
 import VersionTimeline from './VersionTimeline'
+import { useRecoilValue } from 'recoil'
+import { filePathState } from '../recoil/filePathAtom'
 
 const Dashboard = () => {
+    const filePathRecoil = useRecoilValue(filePathState)
+    const [versions, setVersions] = useState([])
 
-    const versions = [
-        { version: "v1.0", time: "Jan 10, 2024" },
-        { version: "v1.1", time: "Feb 5, 2024" },
-        { version: "v2.0", time: "Mar 20, 2024" },
-        { version: "v2.1", time: "Apr 15, 2024" },
-    ];
+    useEffect(() => {
+        window.electron.on("get-versions", (response) => {
+            if (response.success) {
+                console.log("___________------", response.versions)
+                setVersions(response.versions)
+            }
+        });
+    }, [])
+
 
     const handleFileOpenClick = () => {
         // if (window.electron && window.electron.send) {
@@ -22,6 +29,11 @@ const Dashboard = () => {
         //     window.electron.send("open-file")
         // }
     }
+    const handleGetVersions = () => {
+        console.log(filePathRecoil)
+        window.electron.send("get-versions", { filePath: filePathRecoil })
+    }
+
 
     return (
         <div className="text-center bg-zinc-900 w-full h-full">
@@ -44,8 +56,8 @@ const Dashboard = () => {
                 </div>
                 <div className='h-full px-4 gap-5 py-4 w-1/12 flex flex-col item-center bg-zinc-800 border-l-[1px] border-zinc-700'>
                     <BlurryButton className='text-white'>
-                        <i className="ri-upload-cloud-line text-blue-500"></i></BlurryButton>
-                    <BlurryButton className='h-3/4 flex flex-col items-center justify-start'>
+                        <i onClick={handleGetVersions} className="ri-upload-cloud-line text-blue-500"></i></BlurryButton>
+                    <BlurryButton className='h-5/6 flex flex-col items-center justify-start overflow-y-scroll no-scrollbar'>
                         <p className='text-zinc-400 text-xs'>Versions</p>
                         <hr className="w-full border-t border-zinc-600 mb-5 mt-1" />
                         <VersionTimeline versions={versions} />

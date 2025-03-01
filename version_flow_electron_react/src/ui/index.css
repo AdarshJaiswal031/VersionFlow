@@ -156,15 +156,17 @@ body {
   }
 }
 
-.text-gradient-pink {
+.text-gradient {
   background: linear-gradient(90deg, #ff3cac, #562bff, #00dbde);
+  background-size: 200% 200%;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  text-shadow: 0 0 1px rgba(255, 60, 172, 0.8), 0 0 1px rgba(86, 43, 255, 0.8),
-    0 0 1px rgba(0, 219, 222, 0.8);
-    transition: all 0.2s;
-    display: inline-block;
+  transition: transform 0.2s, background-position 0.3s ease-in-out;
+  display: inline-block;
 }
-.text-gradient-pink:hover{
-  transform:scale(1.1)
+
+.text-gradient:hover {
+  transform: scale(1.1);
+  background-position: 100% 0;
 }
+
